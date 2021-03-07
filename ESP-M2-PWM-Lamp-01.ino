@@ -2,7 +2,7 @@
  *   For a LED lamp with an ESP-12 chip.
  *   Most code by Thomas Friberg
  *   Leverages code from https://github.com/mertenats/Open-Home-Automation/blob/master/ha_mqtt_rgbw_light_with_discovery/ha_mqtt_rgbw_light_with_discovery.ino
- *   Updated 13/02/2021
+ *   Updated 7/03/2021
  *   
  */ 
 
