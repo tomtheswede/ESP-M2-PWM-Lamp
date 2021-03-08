@@ -1,3 +1,4 @@
+
 /*  
  *   For a LED lamp with an ESP8285 M2 chip.
  *   Most code by Thomas Friberg
@@ -7,13 +8,13 @@
  */ 
 
 //Import libraries
-#include <WiFi.h>  //SWAP THIS FOR AN ESP8266 WIFI library!!!
+#include <ESP8266WiFi.h>
 #include <PubSubClient.h>
 #include <ArduinoJson.h>
 
 // Replace the next variables with your SSID/Password combination
-char* wifi_ssid = "[replace this]";
-char* wifi_password = "[replace this]";
+char* wifi_ssid = "[Replace this]";
+char* wifi_password = "[Replace this]";
 
 // Add your MQTT Broker IP address, example:
 const char* mqtt_server = "192.168.1.117";
@@ -28,11 +29,11 @@ char ledRootTopic[200] = "";
 const char devName[] = "kitchenBenchLamp"; //machine device name. Set human readable names in discovery
 const char devLocation[] = "kitchen"; //Not currently used
 //LED
-const int ledPin = 22;
-const int ledChannel = 1; //ESP32 specific
-const int pwmFreq = 5000; //ESP32 specific
-const int pwmResolution = 10; //ESP32 specific
-const int defaultFade = 50; //Milliseconds between fade intervals
+const int ledPin = 15;
+//const int ledChannel = 1; //ESP32 specific
+//const int pwmFreq = 5000; //ESP32 specific
+//const int pwmResolution = 10; //ESP32 specific
+const int defaultFade = 20; //Milliseconds between fade intervals
 static const unsigned int PWMTable[101] = {0,1,2,3,5,6,7,8,9,10,12,13,14,16,18,20,21,24,26,28,31,33,36,39,42,45,49,52,56,60,64,68,72,77,82,87,92,98,103,109,115,121,128,135,142,149,156,164,172,180,188,197,206,215,225,235,245,255,266,276,288,299,311,323,336,348,361,375,388,402,417,432,447,462,478,494,510,527,544,562,580,598,617,636,655,675,696,716,737,759,781,803,826,849,872,896,921,946,971,997,1023}; //0 to 100 values for brightnes
 //Button
 const int buttonPin = 4;
@@ -90,8 +91,8 @@ void setupPins() {
   //Set pins and turn off LED by default
   pinMode(ledPin, OUTPUT); //Set as output
   digitalWrite(ledPin, 0); //Turn off LED while connecting
-  ledcSetup(ledChannel, pwmFreq, pwmResolution); // configure LED PWM functionalitites
-  ledcAttachPin(ledPin, ledChannel); // attach the channel to the GPIO to be controlled
+  //ledcSetup(ledChannel, pwmFreq, pwmResolution); // configure LED PWM functionalitites
+  //ledcAttachPin(ledPin, ledChannel); // attach the channel to the GPIO to be controlled
   //TODO - reinstate state from MQTT server if available - after wifi connection
   
   //button setup
@@ -281,13 +282,15 @@ void publishLedState(String ledState, int ledBrightness) {
 void fadeLEDs() {
   if ((millis() % defaultFade == 0) && (ledPinState < ledSetPoint)) {
     ledPinState = ledPinState + 1;
-    ledcWrite(ledChannel, PWMTable[ledPinState]); //AnalogOut is the alternative for ESP8266 devices
+    analogWrite(ledPin,PWMTable[ledPinState]);
+    //ledcWrite(ledChannel, PWMTable[ledPinState]); //AnalogOut is the alternative for ESP8266 devices
     //Serial.println("LED state is now set to " + String(ledPinState));
     delay(1); //Consider less wasteful timer
   }
   else if ((millis() % defaultFade == 0) && (ledPinState > ledSetPoint)) {
     ledPinState = ledPinState - 1;
-    ledcWrite(ledChannel, PWMTable[ledPinState]);
+    analogWrite(ledPin,PWMTable[ledPinState]);
+    //ledcWrite(ledChannel, PWMTable[ledPinState]);
     //Serial.println("LED state is now set to " + String(ledPinState));
     delay(1);
   }
