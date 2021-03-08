@@ -2,7 +2,7 @@
  *   For a LED lamp with an ESP8285 M2 chip.
  *   Most code by Thomas Friberg
  *   Leverages code from https://github.com/mertenats/Open-Home-Automation/blob/master/ha_mqtt_rgbw_light_with_discovery/ha_mqtt_rgbw_light_with_discovery.ino
- *   Updated 07/03/2021
+ *   Updated 08/03/2021
  *   
  */ 
 
@@ -27,9 +27,12 @@ char ledRootTopic[200] = "";
 // Device preferences
 const char devName[] = "kitchenBenchLamp"; //machine device name. Set human readable names in discovery
 const char devLocation[] = "kitchen"; //Not currently used
-//const int ledPin = 12;
-//const int defaultFade = 15; //Milliseconds between fade intervals
-//static const unsigned int PWMTable[101] = {0,1,2,3,5,6,7,8,9,10,12,13,14,16,18,20,21,24,26,28,31,33,36,39,42,45,49,52,56,60,64,68,72,77,82,87,92,98,103,109,115,121,128,135,142,149,156,164,172,180,188,197,206,215,225,235,245,255,266,276,288,299,311,323,336,348,361,375,388,402,417,432,447,462,478,494,510,527,544,562,580,598,617,636,655,675,696,716,737,759,781,803,826,849,872,896,921,946,971,997,1023}; //0 to 100 values for brightnes
+const int ledPin = 22;
+const int ledChannel = 1; //ESP32 specific
+const int pwmFreq = 5000; //ESP32 specific
+const int pwmResolution = 10; //ESP32 specific
+const int defaultFade = 15; //Milliseconds between fade intervals
+static const unsigned int PWMTable[101] = {0,1,2,3,5,6,7,8,9,10,12,13,14,16,18,20,21,24,26,28,31,33,36,39,42,45,49,52,56,60,64,68,72,77,82,87,92,98,103,109,115,121,128,135,142,149,156,164,172,180,188,197,206,215,225,235,245,255,266,276,288,299,311,323,336,348,361,375,388,402,417,432,447,462,478,494,510,527,544,562,580,598,617,636,655,675,696,716,737,759,781,803,826,849,872,896,921,946,971,997,1023}; //0 to 100 values for brightnes
 
 // Initialise instances
 WiFiClient espClient;
@@ -39,7 +42,9 @@ PubSubClient client(espClient);
 //long lastMsgTime = 0;
 
 // Initialise global LED variables
-//int ledPinState = 0;
+int ledPinState = 0;
+int ledSetPoint = 0;
+int lastBrightness = 100;
 
 // Initialise global button variables
 //bool lastButtonState=0;
@@ -53,7 +58,7 @@ PubSubClient client(espClient);
 
 void setup() {
   Serial.begin(115200);
-  //setupPins();
+  setupPins();
   setupWifi();
   client.setServer(mqtt_server, mqtt_port);
   client.setCallback(callback);
@@ -79,8 +84,10 @@ void setupWifi() {
 
 void setupPins() {
   //Set pins and turn off LED by default
-  //pinMode(ledPin, OUTPUT); //Set as output
-  //digitalWrite(ledPin, 0); //Turn off LED while connecting
+  pinMode(ledPin, OUTPUT); //Set as output
+  digitalWrite(ledPin, 0); //Turn off LED while connecting
+  ledcSetup(ledChannel, pwmFreq, pwmResolution); // configure LED PWM functionalitites
+  ledcAttachPin(ledPin, ledChannel); // attach the channel to the GPIO to be controlled
   //TODO - reinstate state from MQTT server if available - after wifi connection
   
   //button setup
@@ -95,7 +102,7 @@ void reconnect() {
     if (client.connect(mqtt_clientname, mqtt_username, mqtt_password)) {
       Serial.println("connected");
       // Discovery and subscription
-      publishLightDiscovery("light", "light", devName, "led", "Kitchen bench light");
+      publishLightDiscovery("light", "light", devName, "led", "Bench light");
       //publishButtonDiscovery("switch", "light", devName, "led", "Kitchen bench light");
       
       
@@ -134,7 +141,9 @@ char publishLightDiscovery(const char *component, const char *device_class, cons
   strcat(tempTopicBuilder5,"~/set");
   json["cmd_t"] = tempTopicBuilder5; 
   json["brightness"] = true; 
-  json["brightness_scale"] = 100; 
+  json["schema"] = "json"; 
+  json["bri_scl"] = 100;
+
 
   //prep for send
   char data[200];
@@ -176,6 +185,9 @@ void loop() {
     reconnect();
   }
   client.loop();
+
+  fadeLEDs();
+  
 }
 
 void callback(char* topic, byte* message, unsigned int length) {
@@ -190,41 +202,80 @@ void callback(char* topic, byte* message, unsigned int length) {
   }
   Serial.println();
 
+  parseMessage(messageTemp);
+
+}
+
+void parseMessage(String messageIn) { //Based on https://arduinojson.org/v6/example/parser/
   //Parse JSON datagram
-  DynamicJsonDocument doc(1024);
-  deserializeJson(doc, messageTemp);
+  StaticJsonDocument<200> doc;
+  DeserializationError error = deserializeJson(doc, messageIn);
+  // Test if parsing succeeds.
+  if (error) {
+    Serial.print(F("deserializeJson() failed: "));
+    Serial.println(error.f_str());
+    return;
+  }
+  
   const char* stateMessage = doc["state"];
+  int brightnessIn = doc["brightness"];
   //Serial.println(stateMessage);
+  //Serial.println(brightnessIn);
   String stateString(stateMessage);
 
   // Feel free to add more if statements to control more GPIOs with MQTT
 
   // If a message is received on the topic esp32/output, you check if the message is either "on" or "off". 
   // Changes the output state according to the message
-    if(stateString == "ON"){
-      Serial.println("ON state detected");
-//      digitalWrite(ledPin, HIGH);
-      //Send state update back to base
-      char tempStateTopic[200] = ""; //Reset the variable before concatinating
-      strcat(tempStateTopic,ledRootTopic);
-      strcat(tempStateTopic,"/state");
-      DynamicJsonDocument json2(1024);
-      json2["state"] = "ON";
-      char data[200];
-      serializeJson(json2, data);
-      client.publish(tempStateTopic, data, true);
+  if(stateString == "ON"){
+    Serial.println("ON state detected");
+    DynamicJsonDocument json2(1024);
+    json2["state"] = "ON";
+    if (brightnessIn==0) {
+      ledSetPoint = lastBrightness; //Set new brightness for LED
+      json2["brightness"] = lastBrightness;
     }
-    else if(stateString == "OFF"){
-      Serial.println("OFF state detected");
-//      digitalWrite(ledPin, LOW);
-      //Send state update back to base
-      char tempStateTopic[200] = ""; //Reset the variable before concatinating
-      strcat(tempStateTopic,ledRootTopic);
-      strcat(tempStateTopic,"/state");
-      DynamicJsonDocument json2(1024);
-      json2["state"] = "OFF";
-      char data[200];
-      serializeJson(json2, data);
-      client.publish(tempStateTopic, data, true);
+    else {
+      lastBrightness = brightnessIn;
+      ledSetPoint = lastBrightness; //Set new brightness for LED
+      json2["brightness"] = lastBrightness;
     }
+    //Send state update back to base
+    char tempStateTopic[200] = ""; //Reset the variable before concatinating
+    strcat(tempStateTopic,ledRootTopic);
+    strcat(tempStateTopic,"/state");
+    char data[200];
+    serializeJson(json2, data);
+    client.publish(tempStateTopic, data, true);
+  }
+  
+  else if(stateString == "OFF"){
+    Serial.println("OFF state detected");
+    ledSetPoint = 0;
+    //Send state update back to base
+    char tempStateTopic[200] = ""; //Reset the variable before concatinating
+    strcat(tempStateTopic,ledRootTopic);
+    strcat(tempStateTopic,"/state");
+    DynamicJsonDocument json2(1024);
+    json2["state"] = "OFF";
+    //json2["brightness"] = lastBrightness;
+    char data[200];
+    serializeJson(json2, data);
+    client.publish(tempStateTopic, data, true);
+  }
+}
+
+void fadeLEDs() {
+  if ((millis() % defaultFade == 0) && (ledPinState < ledSetPoint)) {
+    ledPinState = ledPinState + 1;
+    ledcWrite(ledChannel, PWMTable[ledPinState]); //AnalogOut is the alternative for ESP8266 devices
+    //Serial.println("LED state is now set to " + String(ledPinState));
+    delay(1); //Consider less wasteful timer
+  }
+  else if ((millis() % defaultFade == 0) && (ledPinState > ledSetPoint)) {
+    ledPinState = ledPinState - 1;
+    ledcWrite(ledChannel, PWMTable[ledPinState]);
+    //Serial.println("LED state is now set to " + String(ledPinState));
+    delay(1);
+  }
 }
