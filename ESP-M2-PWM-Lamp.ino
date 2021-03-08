@@ -27,12 +27,15 @@ char ledRootTopic[200] = "";
 // Device preferences
 const char devName[] = "kitchenBenchLamp"; //machine device name. Set human readable names in discovery
 const char devLocation[] = "kitchen"; //Not currently used
+//LED
 const int ledPin = 22;
 const int ledChannel = 1; //ESP32 specific
 const int pwmFreq = 5000; //ESP32 specific
 const int pwmResolution = 10; //ESP32 specific
-const int defaultFade = 15; //Milliseconds between fade intervals
+const int defaultFade = 50; //Milliseconds between fade intervals
 static const unsigned int PWMTable[101] = {0,1,2,3,5,6,7,8,9,10,12,13,14,16,18,20,21,24,26,28,31,33,36,39,42,45,49,52,56,60,64,68,72,77,82,87,92,98,103,109,115,121,128,135,142,149,156,164,172,180,188,197,206,215,225,235,245,255,266,276,288,299,311,323,336,348,361,375,388,402,417,432,447,462,478,494,510,527,544,562,580,598,617,636,655,675,696,716,737,759,781,803,826,849,872,896,921,946,971,997,1023}; //0 to 100 values for brightnes
+//Button
+const int buttonPin = 4;
 
 // Initialise instances
 WiFiClient espClient;
@@ -47,10 +50,11 @@ int ledSetPoint = 0;
 int lastBrightness = 100;
 
 // Initialise global button variables
-//bool lastButtonState=0;
-//bool buttonState=0;
-//long buttonTriggerTime=millis();
-//long currentTime=millis();
+bool lastButtonState=0;
+bool buttonState=0;
+long buttonTriggerTime=millis();
+long currentTime=millis();
+bool primer[4]={0,0,0,0};
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////
 // SETUP
@@ -91,7 +95,7 @@ void setupPins() {
   //TODO - reinstate state from MQTT server if available - after wifi connection
   
   //button setup
-  //pinMode(devPin[devices],INPUT_PULLUP);
+  pinMode(buttonPin,INPUT_PULLUP); //pullup is suitable for momentary type tactile buttons
 }
 
 void reconnect() {
@@ -168,8 +172,8 @@ char publishLightDiscovery(const char *component, const char *device_class, cons
   Serial.println(tempTopicBuilder6);
 
   strcpy(ledRootTopic,subTopicTemplate);
-  Serial.print("Saved root topic: ");
-  Serial.println(ledRootTopic);
+  //Serial.print("Saved root topic: ");
+  //Serial.println(ledRootTopic);
 
 }
 
@@ -187,6 +191,7 @@ void loop() {
   client.loop();
 
   fadeLEDs();
+  buttonCheck();
   
 }
 
@@ -225,43 +230,51 @@ void parseMessage(String messageIn) { //Based on https://arduinojson.org/v6/exam
 
   // Feel free to add more if statements to control more GPIOs with MQTT
 
+  publishLedState(stateString,brightnessIn);
+  
+}
+
+void publishLedState(String ledState, int ledBrightness) {
   // If a message is received on the topic esp32/output, you check if the message is either "on" or "off". 
   // Changes the output state according to the message
-  if(stateString == "ON"){
-    Serial.println("ON state detected");
-    DynamicJsonDocument json2(1024);
-    json2["state"] = "ON";
-    if (brightnessIn==0) {
+  if(ledState == "ON"){
+    //Serial.println("ON state detected");
+    StaticJsonDocument<200> json;
+    json["state"] = "ON";
+    if (ledBrightness==0) {
       ledSetPoint = lastBrightness; //Set new brightness for LED
-      json2["brightness"] = lastBrightness;
+      json["brightness"] = lastBrightness;
     }
     else {
-      lastBrightness = brightnessIn;
+      lastBrightness = ledBrightness;
       ledSetPoint = lastBrightness; //Set new brightness for LED
-      json2["brightness"] = lastBrightness;
+      json["brightness"] = lastBrightness;
     }
     //Send state update back to base
     char tempStateTopic[200] = ""; //Reset the variable before concatinating
     strcat(tempStateTopic,ledRootTopic);
     strcat(tempStateTopic,"/state");
     char data[200];
-    serializeJson(json2, data);
+    serializeJson(json, data);
     client.publish(tempStateTopic, data, true);
+    Serial.print("Sent state: ");
+    Serial.println(data);
   }
-  
-  else if(stateString == "OFF"){
-    Serial.println("OFF state detected");
+  else if(ledState == "OFF"){
+    //Serial.println("OFF state detected");
     ledSetPoint = 0;
     //Send state update back to base
     char tempStateTopic[200] = ""; //Reset the variable before concatinating
     strcat(tempStateTopic,ledRootTopic);
     strcat(tempStateTopic,"/state");
-    DynamicJsonDocument json2(1024);
-    json2["state"] = "OFF";
+    StaticJsonDocument<200> json;
+    json["state"] = "OFF";
     //json2["brightness"] = lastBrightness;
     char data[200];
-    serializeJson(json2, data);
+    serializeJson(json, data);
     client.publish(tempStateTopic, data, true);
+    Serial.print("Sent state: ");
+    Serial.println(data);
   }
 }
 
@@ -278,4 +291,59 @@ void fadeLEDs() {
     //Serial.println("LED state is now set to " + String(ledPinState));
     delay(1);
   }
+}
+
+void buttonCheck() {
+  buttonState=(!digitalRead(buttonPin)); //Use (!digitalRead(buttonPin) for a momentary button
+  //Serial.println(buttonState);
+  //delay(100);
+  currentTime=millis();
+  StaticJsonDocument<200> json;
+  if (buttonState!=lastButtonState && currentTime>buttonTriggerTime+30) {
+    if (buttonState && currentTime>buttonTriggerTime+200) {
+      Serial.print("Short press ");
+      defaultToggleBehaviour();
+      buttonTriggerTime=currentTime;
+      primer[0]=1;
+      primer[1]=1;
+      primer[2]=1;
+      primer[3]=1;
+    }
+    else if (!buttonState) {
+      primer[0]=0;
+      primer[1]=0;
+      primer[2]=0;
+      primer[3]=0;
+    }
+  }
+  lastButtonState=buttonState;
+  if (primer[0] && (currentTime>buttonTriggerTime+700)) {
+    Serial.print("Mid press ");
+    publishLedState("ON",1);
+    primer[0]=0;
+  }
+  else if (primer[1] && (currentTime>buttonTriggerTime+1500)) {
+    Serial.print("Long press ");
+    publishLedState("ON",100);
+    primer[1]=0;
+  }
+  else if (primer[2] && (currentTime>buttonTriggerTime+4000)) {
+    //blank action
+    primer[2]=0;
+  }
+  else if (primer[3] && (currentTime>buttonTriggerTime+8000)) { //8 second delay for 
+    //Blank action
+    primer[3]=0;
+  }
+}
+
+void defaultToggleBehaviour() { //Pauses dimming behaviour if button pressed mid-dimming
+  if (ledPinState==ledSetPoint && ledSetPoint==0) {
+    publishLedState("ON",lastBrightness); //regular toggle on when off
+  }
+  else if (ledPinState==ledSetPoint) {
+    publishLedState("OFF",lastBrightness); //regular toggle off when on
+  }
+  else if (ledPinState!=ledSetPoint)
+    publishLedState("ON",ledPinState); //pause dimming at current pin state
 }
